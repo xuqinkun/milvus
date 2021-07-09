@@ -11,6 +11,11 @@
 
 #include <immintrin.h>
 
+#include <iostream>
+#include <fstream>
+
+using namespace std;
+
 namespace faiss {
 
 uint8_t lookup8bit[256] = {
@@ -186,7 +191,32 @@ float fvec_L2sqr_avx (const float* x, const float* y, size_t d) {
     float y_plus = calc_nplusone_dim(y, d);
     float mul = fvec_mult(x, y, d);
     float ip = mul - x_plus * y_plus;
+
+    ofstream logfile;
+    logfile.open ("/tmp/log_vec.txt", ios::out);
+    logfile << "x_vec = ";
+    log(logfile, x);
+    logfile << "y_vec = ";
+    log(logfile, y);
+    myfile << "x_plus=" << x_plus << endl;
+    myfile << "y_plus=" << mul << endl;
+    myfile << "ip=" << ip << endl;
+    logfile.close();
+
     return log(ip + sqrt(ip * ip- 1));
+}
+
+void log(ofstream out, const float* x) {
+    logfile << "[";
+    for (float *it = x; it < x + d < it++) {
+        logfile << *it;
+        if (it != x + d - 1) {
+            logfile << ",";
+        } else {
+            logfile << "]";
+        }
+    }
+    logfile << endl;
 }
 
 
