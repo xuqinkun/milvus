@@ -145,7 +145,7 @@ float fvec_inner_product_avx (const float* x, const float* y, size_t d) {
     msum2 = _mm_hadd_ps (msum2, msum2);
     return  _mm_cvtss_f32 (msum2);
 }
-
+/*
 float fvec_L2sqr_avx (const float* x, const float* y, size_t d) {
     __m256 msum1 = _mm256_setzero_ps();
 
@@ -175,10 +175,83 @@ float fvec_L2sqr_avx (const float* x, const float* y, size_t d) {
         msum2 += a_m_b1 * a_m_b1;
     }
 
-    msum2 = _mm_hadd_ps (msum2, msum2);
-    msum2 = _mm_hadd_ps (msum2, msum2);
-    return  _mm_cvtss_f32 (msum2);
+    msum2 = _mm_hadd_ps (msum2, msum2);//a0=a0+a1;a1=a2+a3
+    msum2 = _mm_hadd_ps (msum2, msum2);//a0=a0+a1
+    return  _mm_cvtss_f32 (msum2);// return a0
 }
+*/
+
+float fvec_L2sqr_avx (const float* x, const float* y, size_t d) {
+    float x_plus = calc_nplusone_dim(x, d);
+    float y_plus = calc_nplusone_dim(y, d);
+    float mul = fvec_mult(x, y, d);
+    float ip = mul - x_plus * y_plus;
+    return log(ip + sqrt(ip * ip- 1));
+}
+
+
+float fvec_mult(const float*x, const float* y, size_t d) {
+    __m256 msum1 = _mm256_setzero_ps();
+
+    while (d >= 8) {
+        __m256 mx = _mm256_loadu_ps (x); x += 8;
+        __m256 my = _mm256_loadu_ps (y); y += 8;        
+        msum1 += mx * my;
+        d -= 8;
+    }
+
+    __m128 msum2 = _mm256_extractf128_ps(msum1, 1);
+    msum2 +=       _mm256_extractf128_ps(msum1, 0);
+
+    if (d >= 4) {
+        __m128 mx = _mm_loadu_ps (x); x += 4;
+        __m128 my = _mm_loadu_ps (y); y += 4;        
+        msum2 += mx * my;
+        d -= 4;
+    }
+
+    if (d > 0) {
+        __m128 mx = masked_read (d, x);
+        __m128 my = masked_read (d, y);
+        msum2 += mx * my;
+    }
+
+    msum2 = _mm_hadd_ps (msum2, msum2);//a0=a0+a1;a1=a2+a3
+    msum2 = _mm_hadd_ps (msum2, msum2);//a0=a0+a1
+    return  _mm_cvtss_f32 (msum2);// return a0
+}
+
+
+// The extended dim(n+1)
+float calc_nplusone_dim(const float *x, size_t d) {
+    __m256 msum1 = _mm256_setzero_ps();
+
+    while (d >= 8) {
+        __m256 mx = _mm256_loadu_ps (x); x += 8;        
+        msum1 += mx * mx;
+        d -= 8;
+    }
+
+    __m128 msum2 = _mm256_extractf128_ps(msum1, 1);
+    msum2 +=       _mm256_extractf128_ps(msum1, 0);
+
+    if (d >= 4) {
+        __m128 mx = _mm_loadu_ps (x); x += 4;
+        msum2 += mx * mx;
+        d -= 4;
+    }
+
+    if (d > 0) {
+        __m128 mx = masked_read (d, x);        
+        msum2 += mx * mx;
+    }
+
+    msum2 = _mm_hadd_ps (msum2, msum2);  // a0=a0+a1;a1=a2+a3
+    msum2 = _mm_hadd_ps (msum2, msum2);  // a0=a0+a1
+
+    return  _mm_cvtss_f32 (msum2) + 1.0; // return a0 + 1
+}
+
 
 float fvec_L1_avx (const float * x, const float * y, size_t d)
 {
