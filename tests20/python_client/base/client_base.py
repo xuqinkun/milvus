@@ -50,8 +50,9 @@ class Base:
         log.info("[teardown_class] Start teardown class...")
         pass
 
-    def setup(self):
+    def setup_method(self, method):
         log.info(("*" * 35) + " setup " + ("*" * 35))
+        log.info("[setup_method] Start setup test case %s..." % method.__name__)
         self.connection_wrap = ApiConnectionsWrapper()
         self.utility_wrap = ApiUtilityWrapper()
         self.collection_wrap = ApiCollectionWrapper()
@@ -60,8 +61,9 @@ class Base:
         self.collection_schema_wrap = ApiCollectionSchemaWrapper()
         self.field_schema_wrap = ApiFieldSchemaWrapper()
 
-    def teardown(self):
+    def teardown_method(self, method):
         log.info(("*" * 35) + " teardown " + ("*" * 35))
+        log.info("[teardown_method] Start teardown test case %s..." % method.__name__)
 
         try:
             """ Drop collection before disconnect """
@@ -159,6 +161,7 @@ class TestcaseBase(Base):
         collection_name = cf.gen_unique_str(prefix)
         vectors = []
         binary_raw_vectors = []
+        insert_ids = []
         # 1 create collection
         default_schema = cf.gen_default_collection_schema()
         if is_binary:
@@ -173,10 +176,10 @@ class TestcaseBase(Base):
             cf.gen_partitions(collection_w, partition_num)
         # 3 insert data if specified
         if insert_data:
-            collection_w, vectors, binary_raw_vectors = \
+            collection_w, vectors, binary_raw_vectors, insert_ids = \
                 cf.insert_data(collection_w, nb, is_binary, is_all_data_type)
             assert collection_w.is_empty is False
             assert collection_w.num_entities == nb
             collection_w.load()
 
-        return collection_w, vectors, binary_raw_vectors
+        return collection_w, vectors, binary_raw_vectors, insert_ids

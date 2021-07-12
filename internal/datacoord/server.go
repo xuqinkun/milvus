@@ -75,7 +75,7 @@ type Server struct {
 	meta            *meta
 	segmentManager  Manager
 	allocator       allocator
-	cluster         *cluster
+	cluster         *Cluster
 	rootCoordClient types.RootCoord
 	ddChannelName   string
 
@@ -169,13 +169,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) initCluster() error {
-	dManager, err := newClusterNodeManager(s.kvClient)
-	if err != nil {
-		return err
-	}
-	sManager := newClusterSessionManager(s.ctx, s.dataClientCreator)
-	s.cluster = newCluster(s.ctx, dManager, sManager, s)
-	return nil
+	var err error
+	s.cluster, err = NewCluster(s.ctx, s.kvClient, NewNodesInfo(), s)
+	return err
 }
 
 func (s *Server) initServiceDiscovery() error {
@@ -186,19 +182,18 @@ func (s *Server) initServiceDiscovery() error {
 	}
 	log.Debug("registered sessions", zap.Any("sessions", sessions))
 
-	datanodes := make([]*datapb.DataNodeInfo, 0, len(sessions))
+	datanodes := make([]*NodeInfo, 0, len(sessions))
 	for _, session := range sessions {
-		datanodes = append(datanodes, &datapb.DataNodeInfo{
+		info := &datapb.DataNodeInfo{
 			Address:  session.Address,
 			Version:  session.ServerID,
 			Channels: []*datapb.ChannelStatus{},
-		})
+		}
+		nodeInfo := NewNodeInfo(s.ctx, info)
+		datanodes = append(datanodes, nodeInfo)
 	}
 
-	if err := s.cluster.startup(datanodes); err != nil {
-		log.Debug("DataCoord loadMetaFromRootCoord failed", zap.Error(err))
-		return err
-	}
+	s.cluster.Startup(datanodes)
 
 	s.eventCh = s.session.WatchServices(typeutil.DataNodeRole, rev+1)
 	return nil
@@ -340,8 +335,8 @@ func (s *Server) startDataNodeTtLoop(ctx context.Context) {
 			log.Debug("Flush segments", zap.Int64s("segmentIDs", segments))
 			segmentInfos := make([]*datapb.SegmentInfo, 0, len(segments))
 			for _, id := range segments {
-				sInfo, err := s.meta.GetSegment(id)
-				if err != nil {
+				sInfo := s.meta.GetSegment(id)
+				if sInfo == nil {
 					log.Error("get segment from meta error", zap.Int64("id", id),
 						zap.Error(err))
 					continue
@@ -349,7 +344,7 @@ func (s *Server) startDataNodeTtLoop(ctx context.Context) {
 				segmentInfos = append(segmentInfos, sInfo)
 			}
 			if len(segmentInfos) > 0 {
-				s.cluster.flush(segmentInfos)
+				s.cluster.Flush(segmentInfos)
 			}
 			s.segmentManager.ExpireAllocations(ch, ts)
 		}
@@ -365,24 +360,23 @@ func (s *Server) startWatchService(ctx context.Context) {
 			log.Debug("watch service shutdown")
 			return
 		case event := <-s.eventCh:
-			datanode := &datapb.DataNodeInfo{
+			info := &datapb.DataNodeInfo{
 				Address:  event.Session.Address,
 				Version:  event.Session.ServerID,
 				Channels: []*datapb.ChannelStatus{},
 			}
+			node := NewNodeInfo(ctx, info)
 			switch event.EventType {
 			case sessionutil.SessionAddEvent:
 				log.Info("Received datanode register",
-					zap.String("address", datanode.Address),
-					zap.Int64("serverID", datanode.Version))
-				//s.cluster.register(datanode)
-				s.cluster.refresh(s.loadDataNodes())
+					zap.String("address", info.Address),
+					zap.Int64("serverID", info.Version))
+				s.cluster.Register(node)
 			case sessionutil.SessionDelEvent:
 				log.Info("Received datanode unregister",
-					zap.String("address", datanode.Address),
-					zap.Int64("serverID", datanode.Version))
-				//s.cluster.unregister(datanode)
-				s.cluster.refresh(s.loadDataNodes())
+					zap.String("address", info.Address),
+					zap.Int64("serverID", info.Version))
+				s.cluster.UnRegister(node)
 			default:
 				log.Warn("receive unknown service event type",
 					zap.Any("type", event.EventType))
@@ -424,8 +418,8 @@ func (s *Server) startFlushLoop(ctx context.Context) {
 			log.Debug("flush loop shutdown")
 			return
 		case segmentID := <-s.flushCh:
-			segment, err := s.meta.GetSegment(segmentID)
-			if err != nil {
+			segment := s.meta.GetSegment(segmentID)
+			if segment == nil {
 				log.Warn("failed to get flused segment", zap.Int64("id", segmentID))
 				continue
 			}
@@ -441,7 +435,7 @@ func (s *Server) startFlushLoop(ctx context.Context) {
 				continue
 			}
 			// set segment to SegmentState_Flushed
-			if err = s.meta.FlushSegment(segmentID); err != nil {
+			if err = s.meta.SetState(segmentID, commonpb.SegmentState_Flushed); err != nil {
 				log.Error("flush segment complete failed", zap.Error(err))
 				continue
 			}
@@ -482,7 +476,7 @@ func (s *Server) Stop() error {
 	}
 	log.Debug("DataCoord server shutdown")
 	atomic.StoreInt64(&s.isServing, ServerStateStopped)
-	s.cluster.releaseSessions()
+	s.cluster.Close()
 	s.stopServerLoop()
 	return nil
 }
@@ -546,7 +540,8 @@ func (s *Server) loadCollectionFromRootCoord(ctx context.Context, collectionID i
 		Schema:     resp.Schema,
 		Partitions: presp.PartitionIDs,
 	}
-	return s.meta.AddCollection(collInfo)
+	s.meta.AddCollection(collInfo)
+	return nil
 }
 
 func (s *Server) prepareBinlog(req *datapb.SaveBinlogPathsRequest) (map[string]string, error) {
