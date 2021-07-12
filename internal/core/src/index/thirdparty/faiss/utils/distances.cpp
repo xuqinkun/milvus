@@ -21,6 +21,7 @@
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/ConcurrentBitset.h>
 
+#include <ofstream>
 
 #ifndef FINTEGER
 #define FINTEGER long
@@ -614,6 +615,8 @@ void knn_L2sqr (const float * x,
                 float_maxheap_array_t * res,
                 const BitsetView bitset)
 {
+    ofstream out("/tmp/milvus.log", ios::out);
+    out << "knn_l2"<<endl;
     if (nx < distance_compute_blas_threshold) {
         knn_L2sqr_sse (x, y, d, nx, ny, res, bitset);
     } else {
